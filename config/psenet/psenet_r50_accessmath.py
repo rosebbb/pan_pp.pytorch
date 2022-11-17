@@ -1,47 +1,43 @@
 model = dict(
-    type='PAN',
+    type='PSENet',
     backbone=dict(
-        type='resnet18',
+        type='resnet50',
         pretrained=True
     ),
     neck=dict(
-        type='FPEM_v1',
-        in_channels=(64, 128, 256, 512),
+        type='FPN',
+        in_channels=(256, 512, 1024, 2048),
         out_channels=128
     ),
     detection_head=dict(
-        type='PA_Head',
-        in_channels=512,
-        hidden_dim=128,
-        num_classes=6,
+        type='PSENet_Head',
+        in_channels=1024,
+        hidden_dim=256,
+        num_classes=7,
         loss_text=dict(
             type='DiceLoss',
-            loss_weight=1.0
+            loss_weight=0.7
         ),
         loss_kernel=dict(
             type='DiceLoss',
-            loss_weight=0.5
-        ),
-        loss_emb=dict(
-            type='EmbLoss_v1',
-            feature_dim=4,
-            loss_weight=0.25
+            loss_weight=0.3
         )
     )
 )
 data = dict(
     batch_size=16,
     train=dict(
-        type='PAN_IC15',
+        type='PSENET_ACCESSMATH',
         split='train',
         is_transform=True,
         img_size=736,
         short_size=736,
-        kernel_scale=0.5,
+        kernel_num=7,
+        min_scale=0.7,
         read_type='cv2'
     ),
     test=dict(
-        type='PAN_IC15',
+        type='PSENET_ACCESSMATH',
         split='test',
         short_size=736,
         read_type='cv2'
@@ -49,14 +45,14 @@ data = dict(
 )
 train_cfg = dict(
     lr=1e-3,
-    schedule='polylr',
+    schedule=(200, 400,),
     epoch=600,
-    optimizer='Adam',
-    pretrain='/data/Projects/pan_pp.pytorch/pretrained/pan_r18_ic15_finetune.pth.tar'
+    optimizer='SGD'
 )
 test_cfg = dict(
     min_score=0.85,
     min_area=16,
+    kernel_num=7,
     bbox_type='rect',
-    result_path='outputs/submit_ic15.zip'
+    result_path='/data/Datasets/AccessMath/outputs'
 )

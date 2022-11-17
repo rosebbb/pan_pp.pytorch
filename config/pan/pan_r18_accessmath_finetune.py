@@ -32,7 +32,7 @@ model = dict(
 data = dict(
     batch_size=16,
     train=dict(
-        type='PAN_IC15',
+        type='PAN_ACCESSMATH',
         split='train',
         is_transform=True,
         img_size=736,
@@ -41,7 +41,7 @@ data = dict(
         read_type='cv2'
     ),
     test=dict(
-        type='PAN_IC15',
+        type='PAN_ACCESSMATH',
         split='test',
         short_size=736,
         read_type='cv2'
@@ -58,5 +58,5 @@ test_cfg = dict(
     min_score=0.85,
     min_area=16,
     bbox_type='rect',
-    result_path='outputs/submit_ic15.zip'
+    result_path='/data/Datasets/TextDetection/AccessMath/textDetectionResult'
 )

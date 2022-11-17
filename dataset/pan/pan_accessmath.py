@@ -1,7 +1,6 @@
 import math
 import random
-import string
-
+import os
 import cv2
 import mmcv
 import numpy as np
@@ -11,15 +10,23 @@ import torch
 import torchvision.transforms as transforms
 from PIL import Image
 from torch.utils import data
+import glob
+import xml.etree.ElementTree as ET
 
-ic15_root_dir = '/data/Datasets/TextDetection/ICDAR2015/'
-ic15_train_data_dir = ic15_root_dir + 'ch4_training_images/'
-ic15_train_gt_dir = ic15_root_dir + \
-                    'ch4_training_localization_transcription_gt/'
-ic15_test_data_dir = ic15_root_dir + 'ch4_test_images/'
-ic15_test_gt_dir = ic15_root_dir + \
-                   'ch4_test_localization_transcription_gt/'
+# Access math (am) dataset info
+am_train_root = '/data/Projects/accessmath-icfhr2018/AccessMathVOC/'
+train_lectures = ['lecture_01', 'lecture_06', 'lecture_18', 'NM_lecture_01', 'NM_lecture_03']
+am_test_data_dir = '/data/Datasets/TextDetection/AccessMath/AccessMath_ICDAR_2017_data/annotations' # keyframes only to check the result fast, not for evaluation purpose
+# am_test_gt_dir = am_root_dir + 'test/text_label_circum/'
 
+def get_imglist(img_dir, keyword=None):
+    img_list = []
+    for root, dirs, files in os.walk(img_dir, topdown=False):
+        for name in files:
+            file_path = os.path.join(root, name)
+            if keyword is None or keyword in file_path:
+                img_list.append(file_path)
+    return img_list
 
 def get_img(img_path, read_type='pil'):
     try:
@@ -34,26 +41,37 @@ def get_img(img_path, read_type='pil'):
     return img
 
 
-def get_ann(img, gt_path):
+def load_object_xml(root):
+    name = root.find('name').text
+    bndbox = root.find('bndbox')
+
+    xmin = float(bndbox.find("xmin").text)
+    ymin = float(bndbox.find("ymin").text)
+    xmax = float(bndbox.find("xmax").text)
+    ymax = float(bndbox.find("ymax").text)
+
+    return name, xmin, ymin, xmax, ymax
+
+
+
+def get_ann(img, input_xml_file):
     h, w = img.shape[0:2]
-    lines = mmcv.list_from_file(gt_path)
+
+    tree = ET.parse(input_xml_file)
+    root = tree.getroot()
+    # .text
+    filename = root.find('filename').text
+    objects = root.findall("object")
     bboxes = []
     words = []
-    for line in lines:
-        line = line.encode('utf-8').decode('utf-8-sig')
-        line = line.replace('\xef\xbb\xbf', '')
-        gt = line.split(',')
-        word = gt[8].replace('\r', '').replace('\n', '')
-        if word[0] == '#':
-            words.append('###')
-        else:
-            words.append(word)
-
-        bbox = [int(gt[i]) for i in range(8)]
-        bbox = np.array(bbox) / ([w * 1.0, h * 1.0] * 4)
-        bboxes.append(bbox)
+    for o in objects:
+        name, xmin, ymin, xmax, ymax = load_object_xml(o)
+        if name == 'text':
+            bbox_temp = [xmin, ymin, xmax, ymin, xmax, ymax, xmin, ymax]
+            bbox = np.array(bbox_temp) / ([w * 1.0, h * 1.0] * 4)
+            bboxes.append(bbox)
+            words.append('???')
     return np.array(bboxes), words
-
 
 def random_horizontal_flip(imgs):
     if random.random() < 0.5:
@@ -145,46 +163,24 @@ def random_crop_padding(imgs, target_size):
         if len(imgs[idx].shape) == 3:
             s3_length = int(imgs[idx].shape[-1])
             img = imgs[idx][i:i + t_h, j:j + t_w, :]
-            img_p = cv2.copyMakeBorder(
-                img,
-                0,
-                p_h - t_h,
-                0,
-                p_w - t_w,
-                borderType=cv2.BORDER_CONSTANT,
-                value=
-                tuple(0 for i in range(s3_length)))
+            img_p = cv2.copyMakeBorder(img,
+                                       0,
+                                       p_h - t_h,
+                                       0,
+                                       p_w - t_w,
+                                       borderType=cv2.BORDER_CONSTANT,
+                                       value=tuple(0 for i in range(s3_length)))
         else:
             img = imgs[idx][i:i + t_h, j:j + t_w]
-            img_p = cv2.copyMakeBorder(
-                img,
-                0,
-                p_h - t_h,
-                0,
-                p_w - t_w,
-                borderType=cv2.BORDER_CONSTANT,
-                value=(0,))
+            img_p = cv2.copyMakeBorder(img,
+                                       0,
+                                       p_h - t_h,
+                                       0,
+                                       p_w - t_w,
+                                       borderType=cv2.BORDER_CONSTANT,
+                                       value=(0,))
         n_imgs.append(img_p)
     return n_imgs
-
-
-def update_word_mask(instance, instance_before_crop, word_mask):
-    labels = np.unique(instance)
-
-    for label in labels:
-        if label == 0:
-            continue
-        ind = instance == label
-        if np.sum(ind) == 0:
-            word_mask[label] = 0
-            continue
-        ind_before_crop = instance_before_crop == label
-        # print(np.sum(ind), np.sum(ind_before_crop))
-        if float(np.sum(ind)) / np.sum(ind_before_crop) > 0.9:
-            continue
-        word_mask[label] = 0
-
-    return word_mask
 
 
 def dist(a, b):
@@ -223,35 +219,13 @@ def shrink(bboxes, rate, max_shr=20):
 
             shrinked_bboxes.append(shrinked_bbox)
         except Exception:
+            print(type(shrinked_bbox), shrinked_bbox)
             print('area:', area, 'peri:', peri)
             shrinked_bboxes.append(bbox)
 
     return shrinked_bboxes
 
-
-def get_vocabulary(voc_type, EOS='EOS', PADDING='PAD', UNKNOWN='UNK'):
-    if voc_type == 'LOWERCASE':
-        voc = list(string.digits + string.ascii_lowercase)
-    elif voc_type == 'ALLCASES':
-        voc = list(string.digits + string.ascii_letters)
-    elif voc_type == 'ALLCASES_SYMBOLS':
-        voc = list(string.printable[:-6])
-    else:
-        raise KeyError('voc_type must be one of "LOWERCASE", '
-                       '"ALLCASES", "ALLCASES_SYMBOLS"')
-
-    # update the voc with specifical chars
-    voc.append(EOS)
-    voc.append(PADDING)
-    voc.append(UNKNOWN)
-
-    char2id = dict(zip(voc, range(len(voc))))
-    id2char = dict(zip(range(len(voc)), voc))
-
-    return voc, char2id, id2char
-
-
-class PAN_IC15(data.Dataset):
+class PAN_ACCESSMATH(data.Dataset):
     def __init__(self,
                  split='train',
                  is_transform=False,
@@ -265,57 +239,36 @@ class PAN_IC15(data.Dataset):
         self.is_transform = is_transform
 
         self.img_size = img_size if (
-                img_size is None or isinstance(img_size, tuple)) else (img_size,
-                                                                       img_size)
+            img_size is None or isinstance(img_size, tuple)) else (img_size,
+                                                                   img_size)
         self.kernel_scale = kernel_scale
         self.short_size = short_size
         self.with_rec = with_rec
         self.read_type = read_type
 
+        # get image file list and gt file list
         if split == 'train':
-            data_dirs = [ic15_train_data_dir]
-            gt_dirs = [ic15_train_gt_dir]
-        elif split == 'test':
-            data_dirs = [ic15_test_data_dir]
-            gt_dirs = [ic15_test_gt_dir]
+            self.img_paths = []
+            self.gt_paths = []
+            for lecture in train_lectures:
+                img_dir = os.path.join(am_train_root, lecture, 'JPEGImages')
+                self.img_paths += glob.glob(os.path.join(img_dir, '*.png'))
+            self.gt_paths = [x.replace('png', 'xml') for x in self.img_paths]
+            self.gt_paths = [x.replace('JPEGImages', 'Annotations') for x in self.gt_paths]
+                
+        elif split == 'test': # TODO: check 
+            self.img_paths = get_imglist(am_test_data_dir, keyword='keyframes')
         else:
             print('Error: split must be train or test!')
             raise
-
-        self.img_paths = []
-        self.gt_paths = []
-
-        for data_dir, gt_dir in zip(data_dirs, gt_dirs):
-            img_names = [
-                img_name for img_name in mmcv.utils.scandir(data_dir, '.jpg')
-            ]
-            img_names.extend([
-                img_name for img_name in mmcv.utils.scandir(data_dir, '.png')
-            ])
-
-            img_paths = []
-            gt_paths = []
-            for idx, img_name in enumerate(img_names):
-                img_path = data_dir + img_name
-                img_paths.append(img_path)
-
-                gt_name = 'gt_' + img_name.split('.')[0] + '.txt'
-                gt_path = gt_dir + gt_name
-                gt_paths.append(gt_path)
-
-            self.img_paths.extend(img_paths)
-            self.gt_paths.extend(gt_paths)
-
+        print('number of images: ', len(self.img_paths))
         if report_speed:
             target_size = 3000
             extend_scale = (target_size + len(self.img_paths) - 1) // len(
                 self.img_paths)
             self.img_paths = (self.img_paths * extend_scale)[:target_size]
             self.gt_paths = (self.gt_paths * extend_scale)[:target_size]
-
-        self.voc, self.char2id, self.id2char = get_vocabulary('LOWERCASE')
         self.max_word_num = 200
-        self.max_word_len = 32
         print('reading type: %s.' % self.read_type)
 
     def __len__(self):
@@ -326,41 +279,13 @@ class PAN_IC15(data.Dataset):
         gt_path = self.gt_paths[index]
 
         img = get_img(img_path, self.read_type)
-        print(gt_path)
         bboxes, words = get_ann(img, gt_path)
-
         if bboxes.shape[0] > self.max_word_num:
             bboxes = bboxes[:self.max_word_num]
-            words = words[:self.max_word_num]
-
-        gt_words = np.full((self.max_word_num + 1, self.max_word_len),
-                           self.char2id['PAD'],
-                           dtype=np.int32)
-        word_mask = np.zeros((self.max_word_num + 1,), dtype=np.int32)
-        for i, word in enumerate(words):
-            if word == '###':
-                continue
-            word = word.lower()
-            gt_word = np.full((self.max_word_len,),
-                              self.char2id['PAD'],
-                              dtype=np.int)
-            for j, char in enumerate(word):
-                if j > self.max_word_len - 1:
-                    break
-                if char in self.char2id:
-                    gt_word[j] = self.char2id[char]
-                else:
-                    gt_word[j] = self.char2id['UNK']
-            if len(word) > self.max_word_len - 1:
-                gt_word[-1] = self.char2id['EOS']
-            else:
-                gt_word[len(word)] = self.char2id['EOS']
-            gt_words[i + 1] = gt_word
-            word_mask[i + 1] = 1
 
         if self.is_transform:
             img = random_scale(img, self.short_size)
-
+        
         gt_instance = np.zeros(img.shape[0:2], dtype='uint8')
         training_mask = np.ones(img.shape[0:2], dtype='uint8')
         if bboxes.shape[0] > 0:
@@ -368,12 +293,10 @@ class PAN_IC15(data.Dataset):
                                 (bboxes.shape[0], -1, 2)).astype('int32')
             for i in range(bboxes.shape[0]):
                 cv2.drawContours(gt_instance, [bboxes[i]], -1, i + 1, -1)
+
                 if words[i] == '###':
                     cv2.drawContours(training_mask, [bboxes[i]], -1, 0, -1)
 
-        cv2.imwrite('imgtemp.jpg', img)
-        cv2.imwrite('gt_instance.jpg', gt_instance*255)
-        cv2.imwrite('training_mask.jpg', training_mask*255)
 
         gt_kernels = []
         for rate in [self.kernel_scale]:
@@ -390,12 +313,9 @@ class PAN_IC15(data.Dataset):
             if not self.with_rec:
                 imgs = random_horizontal_flip(imgs)
             imgs = random_rotate(imgs)
-            gt_instance_before_crop = imgs[1].copy()
             imgs = random_crop_padding(imgs, self.img_size)
             img, gt_instance, training_mask, gt_kernels = imgs[0], imgs[
                 1], imgs[2], imgs[3:]
-            word_mask = update_word_mask(gt_instance, gt_instance_before_crop,
-                                         word_mask)
 
         gt_text = gt_instance.copy()
         gt_text[gt_text > 0] = 1
@@ -426,8 +346,6 @@ class PAN_IC15(data.Dataset):
         training_mask = torch.from_numpy(training_mask).long()
         gt_instance = torch.from_numpy(gt_instance).long()
         gt_bboxes = torch.from_numpy(gt_bboxes).long()
-        gt_words = torch.from_numpy(gt_words).long()
-        word_mask = torch.from_numpy(word_mask).long()
 
         data = dict(
             imgs=img,
@@ -437,19 +355,19 @@ class PAN_IC15(data.Dataset):
             gt_instances=gt_instance,
             gt_bboxes=gt_bboxes,
         )
-        if self.with_rec:
-            data.update(dict(gt_words=gt_words, word_masks=word_mask))
 
         return data
 
     def prepare_test_data(self, index):
         img_path = self.img_paths[index]
+        print('------------', index, img_path)
 
         img = get_img(img_path, self.read_type)
         img_meta = dict(org_img_size=np.array(img.shape[:2]))
 
         img = scale_aligned_short(img, self.short_size)
         img_meta.update(dict(img_size=np.array(img.shape[:2])))
+        img_meta.update(dict(img_name=os.path.basename(img_path), img_path=img_path))
 
         img = Image.fromarray(img)
         img = img.convert('RGB')

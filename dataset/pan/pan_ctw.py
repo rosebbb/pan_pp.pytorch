@@ -10,7 +10,7 @@ import torchvision.transforms as transforms
 from PIL import Image
 from torch.utils import data
 
-ctw_root_dir = './data/ctw1500/'
+ctw_root_dir = '/data/Datasets/TextDetection/ctw1500/'
 ctw_train_data_dir = ctw_root_dir + 'train/text_image/'
 ctw_train_gt_dir = ctw_root_dir + 'train/text_label_curve/'
 ctw_test_data_dir = ctw_root_dir + 'test/text_image/'
@@ -291,6 +291,10 @@ class PAN_CTW(data.Dataset):
                 cv2.drawContours(gt_instance, [bboxes[i]], -1, i + 1, -1)
                 if words[i] == '###':
                     cv2.drawContours(training_mask, [bboxes[i]], -1, 0, -1)
+
+        cv2.imwrite('imgtemp.jpg', img)
+        cv2.imwrite('gt_instance.jpg', gt_instance*255)
+        cv2.imwrite('training_mask.jpg', training_mask*255)
 
         gt_kernels = []
         for rate in [self.kernel_scale]:

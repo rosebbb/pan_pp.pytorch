@@ -10,13 +10,18 @@ import torchvision.transforms as transforms
 from PIL import Image
 from torch.utils import data
 
-ctw_root_dir = './data/ctw1500/'
-ctw_train_data_dir = ctw_root_dir + 'train/text_image/'
-ctw_train_gt_dir = ctw_root_dir + 'train/text_label_curve/'
-ctw_test_data_dir = ctw_root_dir + 'test/text_image/'
-ctw_test_gt_dir = ctw_root_dir + 'test/text_label_circum/'
+''' for test only '''
+test_data_dir = '/data/Datasets/AccessMath/AccessMath_ICDAR_2017_data/data/annotations'
 
-
+def get_imglist(img_dir, keyword=None):
+    img_list = []
+    for root, dirs, files in os.walk(img_dir, topdown=False):
+        for name in files:
+            file_path = os.path.join(root, name)
+            if keyword is None or keyword in file_path:
+                img_list.append(file_path)
+    return img_list
+    
 def get_img(img_path, read_type='pil'):
     try:
         if read_type == 'cv2':
@@ -201,7 +206,7 @@ def shrink(bboxes, rate, max_shr=20):
     return shrinked_bboxes
 
 
-class PSENET_CTW(data.Dataset):
+class PSENET_ACCESSMATH(data.Dataset):
     def __init__(self,
                  split='train',
                  is_transform=False,
@@ -222,128 +227,22 @@ class PSENET_CTW(data.Dataset):
         self.short_size = short_size
         self.read_type = read_type
 
-        if split == 'train':
-            data_dirs = [ctw_train_data_dir]
-            gt_dirs = [ctw_train_gt_dir]
-        elif split == 'test':
-            data_dirs = [ctw_test_data_dir]
-            gt_dirs = [ctw_test_gt_dir]
+        if split == 'test':
+            self.img_paths = get_imglist(test_data_dir, keyword='keyframes')
         else:
-            print('Error: split must be test or train!')
+            print('Error: split must be test!')
             raise
-
-        self.img_paths = []
-        self.gt_paths = []
-
-        for data_dir, gt_dir in zip(data_dirs, gt_dirs):
-            img_names = [
-                img_name for img_name in mmcv.utils.scandir(data_dir, '.jpg')
-            ]
-            img_names.extend([
-                img_name for img_name in mmcv.utils.scandir(data_dir, '.png')
-            ])
-
-            img_paths = []
-            gt_paths = []
-            for idx, img_name in enumerate(img_names):
-                img_path = data_dir + img_name
-                img_paths.append(img_path)
-
-                gt_name = img_name.split('.')[0] + '.txt'
-                gt_path = gt_dir + gt_name
-                gt_paths.append(gt_path)
-
-            self.img_paths.extend(img_paths)
-            self.gt_paths.extend(gt_paths)
 
         if report_speed:
             target_size = 3000
             data_size = len(self.img_paths)
             extend_scale = (target_size + data_size - 1) // data_size
             self.img_paths = (self.img_paths * extend_scale)[:target_size]
-            self.gt_paths = (self.gt_paths * extend_scale)[:target_size]
 
         self.max_word_num = 200
 
     def __len__(self):
         return len(self.img_paths)
-
-    def prepare_train_data(self, index):
-        img_path = self.img_paths[index]
-        gt_path = self.gt_paths[index]
-
-        img = get_img(img_path, self.read_type)
-        bboxes, words = get_ann(img, gt_path)
-
-        if len(bboxes) > self.max_word_num:
-            bboxes = bboxes[:self.max_word_num]
-
-        if self.is_transform:
-            img = random_scale(img, self.short_size)
-
-        gt_instance = np.zeros(img.shape[0:2], dtype='uint8')
-        training_mask = np.ones(img.shape[0:2], dtype='uint8')
-        if len(bboxes) > 0:
-            for i in range(len(bboxes)):
-                bboxes[i] = np.reshape(
-                    bboxes[i] * ([img.shape[1], img.shape[0]] *
-                                 (bboxes[i].shape[0] // 2)),
-                    (bboxes[i].shape[0] // 2, 2)).astype('int32')
-            for i in range(len(bboxes)):
-                cv2.drawContours(gt_instance, [bboxes[i]], -1, i + 1, -1)
-                if words[i] == '###':
-                    cv2.drawContours(training_mask, [bboxes[i]], -1, 0, -1)
-
-        gt_kernels = []
-        for i in range(1, self.kernel_num):
-            rate = 1.0 - (1.0 - self.min_scale) / (self.kernel_num - 1) * i
-            gt_kernel = np.zeros(img.shape[0:2], dtype='uint8')
-            kernel_bboxes = shrink(bboxes, rate)
-            for i in range(len(bboxes)):
-                cv2.drawContours(gt_kernel, [kernel_bboxes[i].astype(int)], -1,
-                                 1, -1)
-            gt_kernels.append(gt_kernel)
-
-        if self.is_transform:
-            imgs = [img, gt_instance, training_mask]
-            imgs.extend(gt_kernels)
-
-            imgs = random_horizontal_flip(imgs)
-            imgs = random_rotate(imgs)
-            imgs = random_crop_padding(imgs, self.img_size)
-            img, gt_instance, training_mask, gt_kernels = imgs[0], imgs[
-                1], imgs[2], imgs[3:]
-
-        gt_text = gt_instance.copy()
-        gt_text[gt_text > 0] = 1
-        gt_kernels = np.array(gt_kernels)
-
-        if self.is_transform:
-            img = Image.fromarray(img)
-            img = img.convert('RGB')
-            img = transforms.ColorJitter(brightness=32.0 / 255,
-                                         saturation=0.5)(img)
-        else:
-            img = Image.fromarray(img)
-            img = img.convert('RGB')
-
-        img = transforms.ToTensor()(img)
-        img = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                   std=[0.229, 0.224, 0.225])(img)
-
-        gt_text = torch.from_numpy(gt_text).long()
-        gt_kernels = torch.from_numpy(gt_kernels).long()
-        training_mask = torch.from_numpy(training_mask).long()
-
-        data = dict(
-            imgs=img,
-            gt_texts=gt_text,
-            gt_kernels=gt_kernels,
-            training_masks=training_mask,
-        )
-
-        return data
-        # return img, gt_text, gt_kernels, training_mask
 
     def prepare_test_data(self, index):
         img_path = self.img_paths[index]

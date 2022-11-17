@@ -160,9 +160,8 @@ def save_checkpoint(state, checkpoint_path, cfg):
 def main(args):
     cfg = Config.fromfile(args.config)
     cfg.update(dict(debug=args.debug))
-    cfg.data.train.update(dict(debug=args.debug))
+    # cfg.data.train.update(dict(debug=args.debug))
     print(json.dumps(cfg._cfg_dict, indent=4))
-
     if args.checkpoint is not None:
         checkpoint_path = args.checkpoint
     else:
@@ -173,6 +172,7 @@ def main(args):
 
     # data loader
     data_loader = build_data_loader(cfg.data.train)
+    print(cfg.data.batch_size)
     train_loader = torch.utils.data.DataLoader(
         data_loader,
         batch_size=cfg.data.batch_size,
@@ -210,7 +210,7 @@ def main(args):
         elif cfg.train_cfg.optimizer == 'Adam':
             optimizer = torch.optim.Adam(model.parameters(),
                                          lr=cfg.train_cfg.lr)
-
+    print(' cfg.train_cfg, ',  cfg.train_cfg)
     start_epoch = 0
     start_iter = 0
     if hasattr(cfg.train_cfg, 'pretrain'):
@@ -242,10 +242,14 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Hyperparams')
-    parser.add_argument('config', help='config file path')
+    parser.add_argument('--config', help='config file path')
     parser.add_argument('--checkpoint', nargs='?', type=str, default=None)
     parser.add_argument('--resume', nargs='?', type=str, default=None)
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
+    args.config = 'config/pan/pan_r18_accessmath_finetune.py'
+    args.resume = '/data/Projects/pan_pp.pytorch/checkpoints/pan_r18_accessmath_finetune/checkpoint.pth.tar'
+    # args.config = 'config/pan/pan_r18_ctw.py'
+    # args.config = 'config/pan/pan_r18_ic15_finetune.py'
 
     main(args)
