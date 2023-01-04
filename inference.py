@@ -168,7 +168,7 @@ if __name__ == '__main__':
     parser.add_argument('--vis', action='store_true')
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
-    args.config = 'config/pan/pan_r18_accessmath_finetune.py' 
+    args.config = 'config/pan/pan_r18_accessmathtestontrain_finetune.py'
     args.checkpoint = '/data/Projects/pan_pp.pytorch/checkpoints/pan_r18_accessmath_finetune/pan_r18_accessmath_finetune.pth.tar'
     args.vis = True
     main(args)

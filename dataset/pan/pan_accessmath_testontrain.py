@@ -14,18 +14,24 @@ import glob
 import xml.etree.ElementTree as ET
 
 # Access math (am) dataset info
-am_train_root = '/data/Projects/accessmath-icfhr2018/AccessMathVOC/'
+am_test_root = '/data/Projects/accessmath-icfhr2018/AccessMathVOC/'
 train_lectures = ['lecture_01', 'lecture_06', 'lecture_18', 'NM_lecture_01', 'NM_lecture_03']
-am_test_data_dir = '/data/Datasets/TextDetection/AccessMath/AccessMath_ICDAR_2017_data/annotations' # keyframes only to check the result fast, not for evaluation purpose
-# am_test_gt_dir = am_root_dir + 'test/text_label_circum/'
 
-def get_imglist(img_dir, keyword=None):
+def get_imglist(img_dir, subfolders=None, keyword=None):
     img_list = []
-    for root, dirs, files in os.walk(img_dir, topdown=False):
-        for name in files:
-            file_path = os.path.join(root, name)
-            if keyword is None or keyword in file_path:
-                img_list.append(file_path)
+    if subfolders is None:
+        for root, dirs, files in os.walk(img_dir, topdown=False):
+            for name in files:
+                file_path = os.path.join(root, name)
+                if keyword is None or keyword in file_path:
+                    img_list.append(file_path)
+    else:
+        for subfolder in subfolders:
+            for root, dirs, files in os.walk(os.path.join(img_dir, subfolder), topdown=False):
+                for name in files:
+                    file_path = os.path.join(root, name)
+                    if keyword is None or keyword in file_path:
+                        img_list.append(file_path)
     print(img_list[0:100:])
     return img_list
 
@@ -226,7 +232,7 @@ def shrink(bboxes, rate, max_shr=20):
 
     return shrinked_bboxes
 
-class PAN_ACCESSMATH(data.Dataset):
+class PAN_ACCESSMATH_TESTONTRAIN(data.Dataset):
     def __init__(self,
                  split='train',
                  is_transform=False,
@@ -248,19 +254,8 @@ class PAN_ACCESSMATH(data.Dataset):
         self.read_type = read_type
 
         # get image file list and gt file list
-        if split == 'train':
-            self.img_paths = []
-            self.gt_paths = []
-            for lecture in train_lectures:
-                img_dir = os.path.join(am_train_root, lecture, 'JPEGImages')
-                self.img_paths += glob.glob(os.path.join(img_dir, '*.png'))
-            self.gt_paths = [x.replace('png', 'xml') for x in self.img_paths]
-            self.gt_paths = [x.replace('JPEGImages', 'Annotations') for x in self.gt_paths]
-                
-        # elif split == 'test': # TODO: check 
-        #     self.img_paths = get_imglist(am_test_data_dir, keyword='keyframes')
-        elif split == 'test':  # comment out for inference
-            self.img_paths = get_imglist(am_train_root, keyword='JPEGImages')
+        if split == 'test':  # comment out for inference
+            self.img_paths = get_imglist(am_test_root, keyword='JPEGImages')
         else:
             print('Error: split must be train or test!')
             raise
